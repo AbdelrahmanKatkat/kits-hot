@@ -1,4 +1,4 @@
-# label kit
+# Labeler Kit
 
 Local map for labeling a GeoJSON on top of a GeoTIFF. One page shows nine tiles of the image stitched together. You move that page across the file, select features, and write a label you defined in the side panel.
 

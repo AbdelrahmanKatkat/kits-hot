@@ -283,7 +283,14 @@ class Session:
         self._require_src()
         if self.collection is None or self.geojson_path is None:
             raise SessionError("nothing is loaded")
-        dest = Path(path) if path else self.geojson_path
+        dest = self.geojson_path
+        if path and str(path).strip():
+            filename = Path(str(path).strip()).name
+            if not filename or filename in {".", ".."}:
+                raise SessionError("output file needs a name")
+            if Path(filename).suffix.lower() not in {".geojson", ".json"}:
+                filename = f"{filename}.geojson"
+            dest = self.geojson_path.parent / filename
         written = 0
         removed = 0
         kept: list[dict] = []

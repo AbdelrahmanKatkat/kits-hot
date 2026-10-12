@@ -244,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _save(self, body: dict) -> None:
         with _lock:
-            dest, written, removed = _session.save(body.get("path") or None)
+            dest, written, removed = _session.save(body.get("name") or None)
         self._json({"path": str(dest), "written": written, "removed": removed})
 
 

@@ -103,6 +103,10 @@ def test_label_roundtrip_and_tile_pages(tmp_path):
     assert [feature["properties"]["osm_id"] for feature in saved_again["features"]] == [11, 12]
     session.undo()
     assert 0 not in session._deleted
+    copy, _written_copy, _removed_copy = session.save("copy.geojson")
+    assert copy.parent == geojson.parent
+    assert copy.name == "copy.geojson"
+    assert copy.is_file()
     session.close()
 
 

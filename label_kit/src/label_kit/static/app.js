@@ -58,6 +58,11 @@ function clampCamera() {
   camera.y = viewH <= canvas.height ? (canvas.height - viewH) / 2 : Math.min(0, Math.max(canvas.height - viewH, camera.y));
 }
 
+function fileName(path) {
+  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "";
+}
+
 function imagePoint(ev) {
   const rect = canvas.getBoundingClientRect();
   const x = ev.clientX - rect.left;
@@ -78,9 +83,10 @@ function applyState(next) {
     sessionKey = "";
     compareMode = "post";
     $("compare").classList.add("hidden");
+    $("tile-view").classList.add("hidden");
     $("swipe").classList.add("hidden");
     $("help-pop").classList.add("hidden");
-    $("place").textContent = "No image loaded";
+    $("save-path").value = "";
     image = null;
     preImage = null;
     return;
@@ -90,26 +96,52 @@ function applyState(next) {
     compareMode = next.has_pre ? "both" : "post";
     swipe = 0.5;
     preImage = null;
+    $("save-path").value = fileName(next.geojson);
   }
   syncCompare(false);
   const pages = next.pages || { index: 0, count: 1 };
-  $("place").textContent = `Block ${pages.index + 1} of ${pages.count}`;
-  $("page-text").textContent = `${next.stats.on_map} features on this image`;
   syncOverview(next);
   $("field-side").value = next.label_field;
   $("tile").value = String(next.tile);
-  if (!$("save-path").value) $("save-path").value = next.geojson;
+  $("tile-view").textContent = String(next.tile);
+  $("tile-view").classList.remove("hidden");
   $("warning").textContent = next.warning || "";
-  const total = next.stats.total || 0;
-  const labeled = next.stats.labeled || 0;
-  $("bar-fill").style.width = total ? `${(100 * labeled) / total}%` : "0";
-  const bits = Object.entries(next.stats.by_label || {}).map(([name, count]) => `${name} ${count}`);
-  $("stats").textContent = `${labeled} labeled, ${next.stats.unlabeled} unlabeled, ${total} features. ${bits.join(" · ")}`;
+  const done = (pages.done || []).length;
+  const blocks = pages.count || 1;
+  $("bar-fill").style.width = `${(100 * done) / blocks}%`;
+  $("bar-label").textContent = `${done} of ${blocks} blocks`;
+  renderStats(next);
   fillColumns(next.keys || []);
   fillFilter(next.label_names || []);
   renderLabels(next);
-  renderApply(next);
-  $("selected-count").textContent = String(selection.size);
+}
+
+function renderStats(next) {
+  const table = $("stats");
+  table.replaceChildren();
+  const rows = [
+    ["Labeled", next.stats.labeled || 0],
+    ["Unlabeled", next.stats.unlabeled || 0],
+    ["Features", next.stats.total || 0],
+  ];
+  for (const [name, count] of Object.entries(next.stats.by_label || {})) {
+    rows.push([name, count, (next.colors || {})[name]]);
+  }
+  for (const [name, count, color] of rows) {
+    const row = document.createElement("tr");
+    const label = document.createElement("th");
+    if (color) {
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = color;
+      label.append(swatch);
+    }
+    label.append(document.createTextNode(name));
+    const value = document.createElement("td");
+    value.textContent = String(count);
+    row.append(label, value);
+    table.append(row);
+  }
 }
 
 function fillColumns(keys) {
@@ -138,32 +170,44 @@ function renderLabels(next) {
   next.label_names.forEach((name, index) => {
     labelDrafts.push(name);
     const item = document.createElement("li");
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = next.colors[name];
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = name;
-    input.addEventListener("change", () => renameLabel(index, input.value));
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "Remove";
-    remove.addEventListener("click", () => removeLabel(index));
-    item.append(swatch, input, remove);
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "class-apply";
+    apply.innerHTML = `<span class="swatch" style="background:${next.colors[name]}"></span><span>${name}</span>`;
+    apply.addEventListener("click", () => assign(name));
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.textContent = "Rename";
+    rename.addEventListener("click", () => startRename(item, index, name));
+    item.append(apply, rename);
     list.append(item);
   });
 }
 
-function renderApply(next) {
-  const box = $("apply-list");
-  box.replaceChildren();
-  for (const name of next.label_names) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.innerHTML = `<span class="swatch" style="background:${next.colors[name]}"></span>${name}`;
-    button.addEventListener("click", () => assign(name));
-    box.append(button);
-  }
+function startRename(item, index, name) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = name;
+  item.querySelector(".class-apply").replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    if (input.value.trim() === name) renderLabels(state);
+    else renameLabel(index, input.value);
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      input.blur();
+    } else if (ev.key === "Escape") {
+      input.value = name;
+      input.blur();
+    }
+  });
 }
 
 function namesFromDrafts() {
@@ -186,11 +230,6 @@ async function renameLabel(index, value) {
   const rename = {};
   if (previous && previous !== labelDrafts[index]) rename[previous] = labelDrafts[index];
   await syncLabels(rename);
-}
-
-async function removeLabel(index) {
-  labelDrafts.splice(index, 1);
-  await syncLabels();
 }
 
 async function refreshView(refit) {
@@ -241,21 +280,32 @@ function visible(feature) {
 
 function colorOf(feature, selected) {
   if (selected) return "#ffe14a";
-  if (feature.label && state.colors) return state.colors[feature.label];
-  return "#9aa4b2";
+  if (feature.label && state.colors && state.colors[feature.label]) return state.colors[feature.label];
+  return "#ffffff";
 }
 
 function drawFeature(feature, selected) {
+  const labeled = !!(feature.label && state.colors && state.colors[feature.label]);
   const color = colorOf(feature, selected);
-  ctx.lineWidth = (selected ? 3 : 1.6) / camera.scale;
+  ctx.lineWidth = (selected ? 3 : labeled ? 1.6 : 2.2) / camera.scale;
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
+  const halo = !labeled && !selected;
   if (feature.type === "line") {
+    if (halo) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(0,0,0,0.9)";
+      ctx.lineWidth = 5 / camera.scale;
+      for (const line of feature.parts) strokeLine(line, false);
+      ctx.restore();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2.2 / camera.scale;
+    }
     for (const line of feature.parts) strokeLine(line, false);
   } else if (feature.type === "point") {
     for (const [x, y] of feature.parts) {
       ctx.beginPath();
-      ctx.arc(x, y, 5 / camera.scale, 0, Math.PI * 2);
+      ctx.arc(x, y, (halo ? 6 : 5) / camera.scale, 0, Math.PI * 2);
       ctx.fill();
     }
   } else {
@@ -265,7 +315,16 @@ function drawFeature(feature, selected) {
         ring.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
         ctx.closePath();
       }
-      ctx.globalAlpha = selected ? 0.35 : 0.18;
+      if (halo) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(0,0,0,0.9)";
+        ctx.lineWidth = 5 / camera.scale;
+        ctx.stroke();
+        ctx.restore();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2.2 / camera.scale;
+      }
+      ctx.globalAlpha = selected ? 0.35 : labeled ? 0.22 : 0.16;
       ctx.fill("evenodd");
       ctx.globalAlpha = 1;
       ctx.stroke();
@@ -463,9 +522,20 @@ function showMenu(sx, sy) {
     });
     menu.append(clear);
   }
-  menu.style.left = `${Math.min(sx, canvas.width - 180)}px`;
-  menu.style.top = `${Math.min(sy, canvas.height - 40)}px`;
   menu.classList.remove("hidden");
+  const pad = 6;
+  const boundsW = canvas.clientWidth;
+  const boundsH = canvas.clientHeight;
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  let left = sx + 8;
+  let top = sy + 8;
+  if (left + width > boundsW - pad) left = sx - width - 8;
+  if (top + height > boundsH - pad) top = sy - height - 8;
+  const maxLeft = Math.max(pad, boundsW - width - pad);
+  const maxTop = Math.max(pad, boundsH - height - pad);
+  menu.style.left = `${Math.min(Math.max(pad, left), maxLeft)}px`;
+  menu.style.top = `${Math.min(Math.max(pad, top), maxTop)}px`;
 }
 
 async function assign(label) {
@@ -564,7 +634,6 @@ window.addEventListener("mouseup", (ev) => {
       selection.clear();
     }
   }
-  $("selected-count").textContent = String(selection.size);
   draw();
 });
 
@@ -590,7 +659,6 @@ window.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
     selection.clear();
     hideMenu();
-    $("selected-count").textContent = "0";
     draw();
   } else if (ev.key === "Delete") {
     removeSelected();
@@ -668,6 +736,13 @@ async function move(direction) {
 $("prev-page").addEventListener("click", () => move(-1));
 $("next-page").addEventListener("click", () => move(1));
 $("tile").addEventListener("change", () => move(0));
+$("tile-view").addEventListener("click", () => {
+  const sizes = ["512", "1024", "2048"];
+  const current = $("tile").value;
+  const index = sizes.indexOf(current);
+  $("tile").value = sizes[(index + 1) % sizes.length];
+  move(0);
+});
 $("filter").addEventListener("change", draw);
 async function undo() {
   applyState(await post("/api/undo"));
@@ -682,11 +757,16 @@ async function removeSelected() {
 }
 $("save").addEventListener("click", async () => {
   try {
-    const result = await post("/api/save", { path: $("save-path").value });
+    const name = $("save-path").value.trim();
+    if (!name) {
+      $("warning").textContent = "Output file needs a name.";
+      return;
+    }
+    const result = await post("/api/save", { name });
     const parts = [];
     if (result.written) parts.push(`${result.written} labels`);
     if (result.removed) parts.push(`${result.removed} removed`);
-    $("hud").textContent = parts.length ? `Saved ${parts.join(", ")}` : "Saved";
+    $("hud").textContent = parts.length ? `Saved ${fileName(result.path)} (${parts.join(", ")})` : `Saved ${fileName(result.path)}`;
   } catch (err) {
     $("warning").textContent = err.message;
   }
@@ -745,7 +825,6 @@ $("select-unlabeled").addEventListener("click", () => {
   for (const feature of features) {
     if (!feature.label) selection.add(feature.id);
   }
-  $("selected-count").textContent = String(selection.size);
   draw();
 });
 
@@ -761,7 +840,6 @@ $("open-form").addEventListener("submit", async (ev) => {
   }
   try {
     applyState(await post("/api/load", { tiff, pre, geojson, field: "label" }));
-    $("save-path").value = state.geojson || "";
     await refreshView(true);
   } catch (err) {
     $("gate").classList.remove("hidden");
@@ -790,7 +868,6 @@ fetch("/api/state").then((response) => response.json()).then(async (next) => {
     $("tiff").value = next.tiff;
     $("pre").value = next.pre || "";
     $("geojson").value = next.geojson;
-    $("save-path").value = next.geojson;
     await refreshView(true);
   }
 }).catch((err) => {
