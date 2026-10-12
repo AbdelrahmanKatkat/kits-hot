@@ -15,7 +15,9 @@ let hoverTip = "";
 let compareMode = "post";
 let swipe = 0.5;
 let sessionKey = "";
+let panMode = false;
 const labelDrafts = [];
+const hiddenLabels = new Set();
 
 const $ = (sel) => {
   if (!sel) return null;
@@ -48,6 +50,21 @@ function fit() {
   clampCamera();
 }
 
+function zoomBy(factor) {
+  if (!image) return;
+  const sx = canvas.width / 2;
+  const sy = canvas.height / 2;
+  const ix = (sx - camera.x) / camera.scale;
+  const iy = (sy - camera.y) / camera.scale;
+  const minScale = Math.min(canvas.width / image.width, canvas.height / image.height) || 1;
+  const scale = Math.min(24, Math.max(minScale, camera.scale * factor));
+  camera.x = sx - ix * scale;
+  camera.y = sy - iy * scale;
+  camera.scale = scale;
+  clampCamera();
+  draw();
+}
+
 function clampCamera() {
   if (!image || !canvas.width || !canvas.height) return;
   const minScale = Math.min(canvas.width / image.width, canvas.height / image.height) || 1;
@@ -76,9 +93,8 @@ function applyState(next) {
   $("gate").classList.toggle("hidden", open);
   $("side").classList.toggle("hidden", !open);
   $("overview").classList.toggle("hidden", !open);
-  $("pager").classList.toggle("hidden", !open);
-  $("dock").classList.toggle("hidden", !open);
-  $("hud").classList.toggle("hidden", !open);
+  $("workspace-bar").classList.toggle("hidden", !open);
+  requestAnimationFrame(resize);
   if (!open) {
     sessionKey = "";
     compareMode = "post";
@@ -127,6 +143,8 @@ function renderStats(next) {
   for (const [name, count] of Object.entries(next.stats.by_label || {})) {
     rows.push([name, count, (next.colors || {})[name]]);
   }
+  const classCounts = rows.filter((row) => row[2]).map((row) => row[1]);
+  const maxCount = Math.max(1, ...classCounts);
   for (const [name, count, color] of rows) {
     const row = document.createElement("tr");
     const label = document.createElement("th");
@@ -137,8 +155,19 @@ function renderStats(next) {
       label.append(swatch);
     }
     label.append(document.createTextNode(name));
+    if (color && count > 0) {
+      const dots = document.createElement("span");
+      dots.className = "dots";
+      const n = Math.max(1, Math.round((8 * count) / maxCount));
+      for (let i = 0; i < n; i += 1) {
+        const dot = document.createElement("i");
+        dot.style.background = color;
+        dots.append(dot);
+      }
+      label.append(dots);
+    }
     const value = document.createElement("td");
-    value.textContent = String(count);
+    value.textContent = Number(count).toLocaleString("en-US");
     row.append(label, value);
     table.append(row);
   }
@@ -150,6 +179,9 @@ function fillColumns(keys) {
   select.replaceChildren(new Option("None", ""));
   for (const key of keys) select.append(new Option(key, key));
   if (keys.includes(current)) select.value = current;
+  const list = $("field-options");
+  list.replaceChildren();
+  for (const key of keys) list.append(new Option(key, key));
 }
 
 function fillFilter(names) {
@@ -177,9 +209,25 @@ function renderLabels(next) {
     apply.addEventListener("click", () => assign(name));
     const rename = document.createElement("button");
     rename.type = "button";
-    rename.textContent = "Rename";
+    rename.className = "icon-btn";
+    rename.title = "Rename";
+    rename.setAttribute("aria-label", `Rename ${name}`);
+    rename.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 6.5l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
     rename.addEventListener("click", () => startRename(item, index, name));
-    item.append(apply, rename);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "switch";
+    toggle.title = hiddenLabels.has(name) ? "Show this label" : "Hide this label";
+    toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-pressed", hiddenLabels.has(name) ? "false" : "true");
+    toggle.addEventListener("click", () => {
+      if (hiddenLabels.has(name)) hiddenLabels.delete(name);
+      else hiddenLabels.add(name);
+      toggle.setAttribute("aria-pressed", hiddenLabels.has(name) ? "false" : "true");
+      toggle.title = hiddenLabels.has(name) ? "Show this label" : "Hide this label";
+      draw();
+    });
+    item.append(apply, rename, toggle);
     list.append(item);
   });
 }
@@ -272,6 +320,7 @@ function loadImage(blob) {
 }
 
 function visible(feature) {
+  if (feature.label && hiddenLabels.has(feature.label)) return false;
   const filter = $("filter").value;
   if (filter === "unlabeled") return !feature.label;
   if (filter !== "all") return feature.label === filter;
@@ -622,7 +671,7 @@ window.addEventListener("mouseup", (ev) => {
   } else if (ended.button === 2 && !ended.moved) {
     box = null;
     showMenu(ended.sx, ended.sy);
-  } else if (ended.button === 0 && !ended.moved) {
+  } else if (ended.button === 0 && !ended.moved && !panMode) {
     const hit = hitTest(ended.ix, ended.iy);
     if (ended.ctrl && hit) {
       if (selection.has(hit.id)) selection.delete(hit.id);
@@ -736,6 +785,21 @@ async function move(direction) {
 $("prev-page").addEventListener("click", () => move(-1));
 $("next-page").addEventListener("click", () => move(1));
 $("tile").addEventListener("change", () => move(0));
+$("zoom-in").addEventListener("click", () => zoomBy(1.25));
+$("zoom-out").addEventListener("click", () => zoomBy(1 / 1.25));
+$("pan").addEventListener("click", () => {
+  panMode = !panMode;
+  $("pan").setAttribute("aria-pressed", panMode ? "true" : "false");
+  document.querySelector(".map-wrap").classList.toggle("is-pan", panMode);
+});
+$("fullscreen").addEventListener("click", () => {
+  const wrap = document.querySelector(".map-wrap");
+  if (document.fullscreenElement) document.exitFullscreen();
+  else wrap.requestFullscreen();
+});
+$("keys").addEventListener("click", () => $("help").click());
+$("undo-btn").addEventListener("click", () => undo());
+$("save-export").addEventListener("click", () => $("save").click());
 $("tile-view").addEventListener("click", () => {
   const sizes = ["512", "1024", "2048"];
   const current = $("tile").value;
