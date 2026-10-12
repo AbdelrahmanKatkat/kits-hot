@@ -41,8 +41,10 @@ class SessionError(Exception):
 class Session:
     def __init__(self) -> None:
         self.tiff_path: Path | None = None
+        self.pre_path: Path | None = None
         self.geojson_path: Path | None = None
         self._src: rasterio.DatasetReader | None = None
+        self._pre: rasterio.DatasetReader | None = None
         self.collection: dict | None = None
         self.features: list[dict] = []
         self.working: list[str | None] = []
@@ -55,6 +57,8 @@ class Session:
         self.property_keys: list[str] = []
         self.warning = ""
         self._done_pages: set[tuple[int, int]] = set()
+        self._deleted: set[int] = set()
+        self._delete_saved: set[int] = set()
         self._overview_jpeg: bytes | None = None
         self._pixel_geoms: list = []
         self._tree_ids: list[int] = []
@@ -63,31 +67,77 @@ class Session:
         self._backed_up: set[Path] = set()
 
     def close(self) -> None:
-        if self._src is not None:
-            self._src.close()
-            self._src = None
+        for attr in ("_src", "_pre"):
+            dataset = getattr(self, attr)
+            if dataset is not None:
+                dataset.close()
+                setattr(self, attr, None)
         self._overview_jpeg = None
 
-    def load(self, tiff: str, geojson: str, label_field: str = "label") -> None:
+    def reset(self) -> None:
+        self.close()
+        self.tiff_path = None
+        self.pre_path = None
+        self.geojson_path = None
+        self.collection = None
+        self.features = []
+        self.working = []
+        self.dirty = set()
+        self._deleted = set()
+        self._delete_saved = set()
+        self.label_names = []
+        self._undo.clear()
+        self._pixel_geoms = []
+        self._tree_ids = []
+        self._tree = None
+        self._done_pages.clear()
+        self.warning = ""
+        self.origin_col = 0
+        self.origin_row = 0
+
+    def load(self, tiff: str, geojson: str, label_field: str = "label", pre: str = "") -> None:
         tiff_path = Path(tiff)
         geojson_path = Path(geojson)
+        pre_path = Path(pre) if str(pre).strip() else None
         if not tiff_path.is_file():
             raise SessionError(f"TIFF not found: {tiff_path}")
         if not geojson_path.is_file():
             raise SessionError(f"GeoJSON not found: {geojson_path}")
+        if pre_path is not None and not pre_path.is_file():
+            raise SessionError(f"Pre TIFF not found: {pre_path}")
         field = _clean_field(label_field)
         src = rasterio.open(tiff_path)
+        pre_src = None
         try:
+            if pre_path is not None:
+                pre_src = rasterio.open(pre_path)
+                if pre_src.width != src.width or pre_src.height != src.height:
+                    raise SessionError("Pre and post images must have the same width and height.")
             collection = json.loads(geojson_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             src.close()
+            if pre_src is not None:
+                pre_src.close()
             raise SessionError(f"GeoJSON is not valid JSON: {exc}") from exc
+        except Exception:
+            src.close()
+            if pre_src is not None:
+                pre_src.close()
+            raise
         if isinstance(collection, dict) and collection.get("type") == "Feature":
             collection = {"type": "FeatureCollection", "features": [collection]}
-        features = _feature_list(collection)
+        try:
+            features = _feature_list(collection)
+        except SessionError:
+            src.close()
+            if pre_src is not None:
+                pre_src.close()
+            raise
         self.close()
         self._src = src
+        self._pre = pre_src
         self.tiff_path = tiff_path
+        self.pre_path = pre_path
         self.geojson_path = geojson_path
         self.collection = collection
         self.features = features
@@ -99,6 +149,8 @@ class Session:
         self.origin_col = 0
         self.origin_row = 0
         self._done_pages = set()
+        self._deleted = set()
+        self._delete_saved = set()
         self._overview_jpeg = None
         self.warning = ""
         self.property_keys = _property_keys(features)
@@ -189,52 +241,87 @@ class Session:
             self.working[index] = label
             self.dirty.add(index)
         if step:
-            self._undo.append(step)
-            if len(self._undo) > 50:
-                self._undo.pop(0)
+            self._push_undo(("label", step))
+
+    def delete(self, ids: list[int]) -> None:
+        self._require_src()
+        removed: list[int] = []
+        for raw in ids:
+            index = int(raw)
+            if index < 0 or index >= len(self.features) or index in self._deleted:
+                continue
+            self._deleted.add(index)
+            removed.append(index)
+        if removed:
+            self._push_undo(("delete", removed))
+
+    def _push_undo(self, action: tuple) -> None:
+        self._undo.append(action)
+        if len(self._undo) > 50:
+            self._undo.pop(0)
 
     def undo(self) -> None:
         self._require_src()
         if not self._undo:
             return
-        for index, label, was_dirty in reversed(self._undo.pop()):
+        kind, payload = self._undo.pop()
+        if kind == "delete":
+            for index in payload:
+                self._deleted.discard(index)
+                if index in self._delete_saved:
+                    self._delete_saved.discard(index)
+                    self.dirty.add(index)
+            return
+        for index, label, was_dirty in reversed(payload):
             self.working[index] = label
             if was_dirty:
                 self.dirty.add(index)
             else:
                 self.dirty.discard(index)
 
-    def save(self, path: str | None = None) -> tuple[Path, int]:
+    def save(self, path: str | None = None) -> tuple[Path, int, int]:
         self._require_src()
         if self.collection is None or self.geojson_path is None:
             raise SessionError("nothing is loaded")
         dest = Path(path) if path else self.geojson_path
         written = 0
+        removed = 0
+        kept: list[dict] = []
         for index, feature in enumerate(self.features):
+            if index in self._deleted:
+                removed += 1
+                continue
             current = self.working[index]
             props = feature.setdefault("properties", {})
             existing = props.get(self.label_field)
-            if index not in self.dirty and (current is None or existing == current):
-                continue
-            props[self.label_field] = "" if current is None else current
-            written += 1
+            if index in self.dirty or (current is not None and existing != current):
+                props[self.label_field] = "" if current is None else current
+                written += 1
+            kept.append(feature)
         if dest.exists() and dest.resolve() not in self._backed_up:
             backup = dest.with_suffix(dest.suffix + ".bak")
             if not backup.exists():
                 shutil.copy2(dest, backup)
             self._backed_up.add(dest.resolve())
-        dest.write_text(json.dumps(self.collection, ensure_ascii=False), encoding="utf-8")
-        return dest, written
+        payload = dict(self.collection)
+        payload["features"] = kept
+        dest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        self.dirty.clear()
+        self._delete_saved = set(self._deleted)
+        return dest, written, removed
 
     def state(self) -> dict:
         if self._src is None:
             return {"loaded": False}
         cols, rows = self.grid_size()
         window, origin = self._view_window()
-        labeled = sum(1 for label in self.working if label)
+        alive = [index for index in range(len(self.features)) if index not in self._deleted]
+        labeled = sum(1 for index in alive if self.working[index])
         return {
             "loaded": True,
             "tiff": str(self.tiff_path),
+            "pre": str(self.pre_path) if self.pre_path else "",
+            "has_pre": self._pre is not None,
             "geojson": str(self.geojson_path),
             "width": self._src.width,
             "height": self._src.height,
@@ -263,16 +350,24 @@ class Session:
                 "seams_y": _seams(int(window.height), self.tile_px),
             },
             "stats": {
-                "total": len(self.features),
+                "total": len(alive),
                 "labeled": labeled,
-                "unlabeled": len(self.features) - labeled,
-                "by_label": dict(Counter(label for label in self.working if label)),
-                "on_map": len(self._tree_ids),
+                "unlabeled": len(alive) - labeled,
+                "by_label": dict(Counter(self.working[index] for index in alive if self.working[index])),
+                "on_map": sum(1 for index in self._tree_ids if index not in self._deleted),
+                "changed": len(self.dirty) + len(self._deleted - self._delete_saved),
             },
         }
 
-    def render_jpeg(self) -> bytes:
-        src = self._require_src()
+    def render_jpeg(self, layer: str = "post") -> bytes:
+        if layer == "pre":
+            if self._pre is None:
+                raise SessionError("no pre image is loaded")
+            src = self._pre
+        elif layer == "post":
+            src = self._require_src()
+        else:
+            raise SessionError("image must be pre or post")
         window, _origin = self._view_window()
         indexes = [1] if src.count == 1 else list(range(1, min(3, src.count) + 1))
         data = src.read(indexes, window=window)
@@ -301,6 +396,8 @@ class Session:
         payload = []
         for tree_index in hits:
             index = self._tree_ids[int(tree_index)]
+            if index in self._deleted:
+                continue
             geom = self._pixel_geoms[index]
             kind, parts = _draw_parts(geom, x0, y0)
             if not parts:

@@ -8,7 +8,7 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from label_kit.session import Session, SessionError
 
@@ -19,7 +19,8 @@ _session = Session()
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Label GeoJSON features on a GeoTIFF.")
-    parser.add_argument("--tiff", help="GeoTIFF to draw under the features")
+    parser.add_argument("--tiff", help="post GeoTIFF drawn under the features")
+    parser.add_argument("--pre", help="optional pre GeoTIFF with the same width and height")
     parser.add_argument("--geojson", help="FeatureCollection to label")
     parser.add_argument("--field", default="label", help="property name written on save (default: label)")
     parser.add_argument("--tile", type=int, default=1024, help="pixel size of one tile in the 3x3 page")
@@ -29,7 +30,7 @@ def main() -> None:
     _session.tile_px = args.tile
     if args.tiff and args.geojson:
         try:
-            _session.load(args.tiff, args.geojson, args.field)
+            _session.load(args.tiff, args.geojson, args.field, args.pre or "")
         except SessionError as exc:
             raise SystemExit(str(exc)) from exc
     elif args.tiff or args.geojson:
@@ -85,6 +86,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._import(body)
             elif path == "/api/assign":
                 self._assign(body)
+            elif path == "/api/delete":
+                self._delete(body)
+            elif path == "/api/reset":
+                self._reset()
             elif path == "/api/undo":
                 self._undo()
             elif path == "/api/save":
@@ -134,9 +139,10 @@ class Handler(BaseHTTPRequestHandler):
             return _session.state()
 
     def _raster(self) -> None:
+        layer = (parse_qs(urlparse(self.path).query).get("layer") or ["post"])[0]
         with _lock:
             try:
-                payload = _session.render_jpeg()
+                payload = _session.render_jpeg(layer)
             except SessionError as exc:
                 self._json({"error": str(exc)}, status=400)
                 return
@@ -172,7 +178,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _load(self, body: dict) -> None:
         with _lock:
-            _session.load(body.get("tiff", ""), body.get("geojson", ""), body.get("field") or "label")
+            _session.load(
+                body.get("tiff", ""),
+                body.get("geojson", ""),
+                body.get("field") or "label",
+                body.get("pre") or "",
+            )
             state = _session.state()
         self._json(state)
 
@@ -213,6 +224,18 @@ class Handler(BaseHTTPRequestHandler):
             state = _session.state()
         self._json(state)
 
+    def _delete(self, body: dict) -> None:
+        with _lock:
+            _session.delete(list(body.get("ids") or []))
+            state = _session.state()
+        self._json(state)
+
+    def _reset(self) -> None:
+        with _lock:
+            _session.reset()
+            state = _session.state()
+        self._json(state)
+
     def _undo(self) -> None:
         with _lock:
             _session.undo()
@@ -221,8 +244,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _save(self, body: dict) -> None:
         with _lock:
-            dest, written = _session.save(body.get("path") or None)
-        self._json({"path": str(dest), "written": written})
+            dest, written, removed = _session.save(body.get("path") or None)
+        self._json({"path": str(dest), "written": written, "removed": removed})
 
 
 def _pick_file(kind: str) -> str:
@@ -236,10 +259,10 @@ def _pick_file(kind: str) -> str:
     except tk.TclError:
         pass
     root.update()
-    if kind == "tiff":
+    if kind in {"tiff", "pre"}:
         path = filedialog.askopenfilename(
             parent=root,
-            title="GeoTIFF",
+            title="Pre GeoTIFF" if kind == "pre" else "Post GeoTIFF",
             filetypes=[("GeoTIFF", "*.tif *.tiff"), ("All files", "*.*")],
         )
     else:

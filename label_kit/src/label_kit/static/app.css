@@ -88,8 +88,8 @@ canvas {
 
 .hud {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
+  right: 12px;
+  bottom: 60px;
   padding: 6px 8px;
   background: rgba(27, 40, 56, 0.82);
   color: #f4f7fb;
@@ -97,6 +97,112 @@ canvas {
   border-radius: 4px;
   pointer-events: none;
 }
+
+.swipe {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  margin-left: -18px;
+  z-index: 4;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.swipe::before {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(16, 20, 24, 0.35);
+  pointer-events: none;
+}
+
+.swipe-grip {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 28px;
+  height: 44px;
+  margin-top: -22px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(16, 20, 24, 0.35);
+  pointer-events: none;
+}
+
+.compare {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(27, 40, 56, 0.92);
+  color: #f4f7fb;
+  display: grid;
+  place-items: center;
+}
+
+.compare svg { width: 22px; height: 22px; display: block; }
+.compare .icon-single { display: none; }
+.compare.is-post .icon-split { display: none; }
+.compare.is-post .icon-single { display: block; }
+.compare.hidden { display: none; }
+
+.dock {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+}
+
+.dock button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(27, 40, 56, 0.92);
+  color: #f4f7fb;
+  display: grid;
+  place-items: center;
+}
+
+.dock button.primary {
+  background: #d73f3f;
+  color: white;
+}
+
+.dock svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+.help-pop {
+  position: absolute;
+  right: 12px;
+  bottom: 112px;
+  z-index: 5;
+  width: 280px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 20, 24, 0.2);
+  font-size: 13px;
+}
+
+.help-pop p { margin: 0 0 8px; }
+.help-pop p:last-child { margin-bottom: 0; }
 
 .overview {
   position: absolute;
@@ -236,7 +342,8 @@ input[type="text"], select {
   border-radius: 8px;
 }
 
-#open-form label { display: grid; grid-template-columns: 120px 1fr auto; }
+#open-form label { display: grid; grid-template-columns: 150px 1fr auto; }
+#open-form .opt { color: #526173; font-size: 12px; font-weight: 400; margin-left: 6px; }
 #open-form p { color: #526173; }
 
 .gate-actions {

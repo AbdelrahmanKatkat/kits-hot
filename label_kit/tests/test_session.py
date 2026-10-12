@@ -7,16 +7,17 @@ from rasterio.transform import from_origin
 from label_kit.session import Session
 
 
-def _write_tiff(path):
-    data = np.zeros((3, 500, 500), dtype=np.uint8)
-    data[:, 40:120, 40:120] = 200
+def _write_tiff(path, size=500):
+    data = np.zeros((3, size, size), dtype=np.uint8)
+    if size >= 120:
+        data[:, 40:120, 40:120] = 200
     transform = from_origin(500000, 8500000, 1, 1)
     with rasterio.open(
         path,
         "w",
         driver="GTiff",
-        width=500,
-        height=500,
+        width=size,
+        height=size,
         count=3,
         dtype="uint8",
         crs="EPSG:32736",
@@ -86,11 +87,48 @@ def test_label_roundtrip_and_tile_pages(tmp_path):
     session.set_labels(["true", "false"], None, "review_status")
     session.assign([1], "false")
     session.assign([0], None)
-    dest, written = session.save()
+    dest, written, removed = session.save()
     assert written == 2
+    assert removed == 0
     saved = json.loads(dest.read_text(encoding="utf-8"))
     assert saved["features"][0]["properties"]["review_status"] == ""
     assert saved["features"][1]["properties"]["review_status"] == "false"
     assert "label" not in saved["features"][2]["properties"]
     assert dest.with_suffix(dest.suffix + ".bak").is_file()
+    session.delete([0])
+    assert 0 in session._deleted
+    _dest, _written, removed_now = session.save()
+    assert removed_now == 1
+    saved_again = json.loads(dest.read_text(encoding="utf-8"))
+    assert [feature["properties"]["osm_id"] for feature in saved_again["features"]] == [11, 12]
+    session.undo()
+    assert 0 not in session._deleted
+    session.close()
+
+
+def test_pre_image_must_match_and_can_render(tmp_path):
+    from label_kit.session import SessionError
+
+    tiff = tmp_path / "post.tif"
+    pre = tmp_path / "pre.tif"
+    small = tmp_path / "small.tif"
+    geojson = tmp_path / "buildings.geojson"
+    _write_tiff(tiff)
+    _write_tiff(pre)
+    _write_tiff(small, 32)
+    geojson.write_text(
+        json.dumps({"type": "FeatureCollection", "features": []}),
+        encoding="utf-8",
+    )
+    session = Session()
+    try:
+        session.load(str(tiff), str(geojson), "label", str(small))
+        raise AssertionError("different sizes should be rejected")
+    except SessionError as exc:
+        assert "same width" in str(exc)
+    session.load(str(tiff), str(geojson), "label", str(pre))
+    assert session.state()["has_pre"] is True
+    assert session.render_jpeg("pre")[:2] == b"\xff\xd8"
+    session.reset()
+    assert session.state() == {"loaded": False}
     session.close()

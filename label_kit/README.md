@@ -28,7 +28,9 @@ The app listens on `http://127.0.0.1:8765/`. The TIFF and GeoJSON are read only 
 2. Choose an existing property column and click **Use that column**. That column becomes the output column too (you can still change **Column** manually).
 3. Add label names if you want extra options beyond what was found in the column.
 2. Click a feature to select it. Ctrl+click adds or removes. Right-drag a rectangle to select every feature the rectangle touches. Right-click the map to apply a label.
-Keys 1–9 apply the labels in order. 0 clears the label. Next and Prev walk the image one 3×3 block at a time, row by row. The thumbnail in the top-left is the whole TIFF with the page grid drawn on it. The current block has a yellow outline, and a block turns green after you leave it with Next. Prev and Next sit at the bottom-left.
+Keys 1–9 apply the labels in order. 0 clears the label. Del removes the selected features. Ctrl+Z undoes, Ctrl+F fits the page, and Ctrl+S saves. Next and Prev walk the image one 3×3 block at a time, row by row. The thumbnail in the top-left is the whole post image with the page grid drawn on it. The current block has a yellow outline, and a block turns green after you leave it with Next. Prev and Next sit at the bottom-left. New, Help, and Save are the icons at the bottom-right.
+
+If you also open a pre image of the same size, post stays on the left and pre is on the right. Left-click the line and drag it. The icon at the top right switches between that slider and post only.
 4. Drag to pan and use the wheel to zoom inside the current nine tiles.
 5. Save. The first save of an existing file copies the original to a `.bak` next to it. Only the label property is written; other fields stay as they were.
 

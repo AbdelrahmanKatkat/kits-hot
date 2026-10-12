@@ -6,11 +6,15 @@ const selection = new Set();
 let state = { loaded: false };
 let features = [];
 let image = null;
+let preImage = null;
 let rasterToken = 0;
 let camera = { scale: 1, x: 0, y: 0 };
 let drag = null;
 let box = null;
 let hoverTip = "";
+let compareMode = "post";
+let swipe = 0.5;
+let sessionKey = "";
 const labelDrafts = [];
 
 const $ = (sel) => {
@@ -34,15 +38,24 @@ function resize() {
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.floor(rect.width));
   canvas.height = Math.max(1, Math.floor(rect.height));
+  clampCamera();
   draw();
 }
 
 function fit() {
   if (!image) return;
-  const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
-  camera.scale = scale || 1;
-  camera.x = (canvas.width - image.width * camera.scale) / 2;
-  camera.y = (canvas.height - image.height * camera.scale) / 2;
+  camera.scale = Math.min(canvas.width / image.width, canvas.height / image.height) || 1;
+  clampCamera();
+}
+
+function clampCamera() {
+  if (!image || !canvas.width || !canvas.height) return;
+  const minScale = Math.min(canvas.width / image.width, canvas.height / image.height) || 1;
+  camera.scale = Math.min(24, Math.max(minScale, camera.scale));
+  const viewW = image.width * camera.scale;
+  const viewH = image.height * camera.scale;
+  camera.x = viewW <= canvas.width ? (canvas.width - viewW) / 2 : Math.min(0, Math.max(canvas.width - viewW, camera.x));
+  camera.y = viewH <= canvas.height ? (canvas.height - viewH) / 2 : Math.min(0, Math.max(canvas.height - viewH, camera.y));
 }
 
 function imagePoint(ev) {
@@ -54,11 +67,31 @@ function imagePoint(ev) {
 
 function applyState(next) {
   state = next;
-  $("gate").classList.toggle("hidden", !!next.loaded);
-  $("side").classList.toggle("hidden", !next.loaded);
-  $("overview").classList.toggle("hidden", !next.loaded);
-  $("pager").classList.toggle("hidden", !next.loaded);
-  if (!next.loaded) return;
+  const open = !!next.loaded;
+  $("gate").classList.toggle("hidden", open);
+  $("side").classList.toggle("hidden", !open);
+  $("overview").classList.toggle("hidden", !open);
+  $("pager").classList.toggle("hidden", !open);
+  $("dock").classList.toggle("hidden", !open);
+  $("hud").classList.toggle("hidden", !open);
+  if (!open) {
+    sessionKey = "";
+    compareMode = "post";
+    $("compare").classList.add("hidden");
+    $("swipe").classList.add("hidden");
+    $("help-pop").classList.add("hidden");
+    $("place").textContent = "No image loaded";
+    image = null;
+    preImage = null;
+    return;
+  }
+  if (sessionKey !== next.tiff) {
+    sessionKey = next.tiff;
+    compareMode = next.has_pre ? "both" : "post";
+    swipe = 0.5;
+    preImage = null;
+  }
+  syncCompare(false);
   const pages = next.pages || { index: 0, count: 1 };
   $("place").textContent = `Block ${pages.index + 1} of ${pages.count}`;
   $("page-text").textContent = `${next.stats.on_map} features on this image`;
@@ -162,7 +195,9 @@ async function removeLabel(index) {
 
 async function refreshView(refit) {
   const token = ++rasterToken;
+  const wantPre = !!state.has_pre;
   const raster = await fetch("/api/raster");
+  const preResp = wantPre ? await fetch("/api/raster?layer=pre") : null;
   let payload = { features: [] };
   try {
     const resp = await fetch("/api/features");
@@ -175,17 +210,26 @@ async function refreshView(refit) {
     throw new Error(err.error || "could not read the TIFF window");
   }
   const blob = await raster.blob();
+  const preBlob = preResp && preResp.ok ? await preResp.blob() : null;
   if (token !== rasterToken) return;
   features = payload.features || [];
-  const img = new Image();
-  img.onload = () => {
-    if (token !== rasterToken) return;
-    image = img;
-    if (refit) fit();
-    draw();
-    $("hud").textContent = hoverTip || `${features.length} features in this page`;
-  };
-  img.src = URL.createObjectURL(blob);
+  const img = await loadImage(blob);
+  const pre = preBlob ? await loadImage(preBlob) : null;
+  if (token !== rasterToken) return;
+  image = img;
+  preImage = pre;
+  if (refit) fit();
+  draw();
+  $("hud").textContent = hoverTip || `${features.length} features in this page`;
+}
+
+function loadImage(blob) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("could not show the image"));
+    img.src = URL.createObjectURL(blob);
+  });
 }
 
 function visible(feature) {
@@ -241,8 +285,8 @@ function draw() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = camera.scale < 2;
+  paintImagery();
   ctx.setTransform(camera.scale, 0, 0, camera.scale, camera.x, camera.y);
-  if (image) ctx.drawImage(image, 0, 0);
   if (state.view) {
     ctx.strokeStyle = "rgba(255,255,255,0.7)";
     ctx.lineWidth = 1 / camera.scale;
@@ -271,6 +315,56 @@ function draw() {
     ctx.strokeRect(box.x, box.y, box.w, box.h);
     ctx.setLineDash([]);
   }
+}
+
+function paintImagery() {
+  if (preImage && compareMode === "both") {
+    const split = Math.round(canvas.width * swipe);
+    if (image) paintImage(image, 0, 0, split, canvas.height);
+    paintImage(preImage, split, 0, canvas.width - split, canvas.height);
+    return;
+  }
+  if (!image) return;
+  ctx.setTransform(camera.scale, 0, 0, camera.scale, camera.x, camera.y);
+  ctx.drawImage(image, 0, 0);
+}
+
+function paintImage(img, x, y, w, h) {
+  if (w <= 0 || h <= 0) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.setTransform(camera.scale, 0, 0, camera.scale, camera.x, camera.y);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+
+function positionSwipe() {
+  $("swipe").style.left = `${swipe * 100}%`;
+}
+
+function syncCompare(redraw) {
+  const button = $("compare");
+  const both = compareMode === "both" && !!state.has_pre;
+  button.classList.toggle("hidden", !state.has_pre);
+  button.classList.toggle("is-post", !both);
+  button.title = both ? "Pre and post" : "Post";
+  button.setAttribute("aria-label", button.title);
+  $("swipe").classList.toggle("hidden", !both);
+  positionSwipe();
+  if (redraw) draw();
+}
+
+let sliding = false;
+
+function moveSwipe(clientX) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return;
+  swipe = Math.min(0.98, Math.max(0.02, (clientX - rect.left) / rect.width));
+  $("swipe").setAttribute("aria-valuenow", String(Math.round(swipe * 100)));
+  positionSwipe();
+  draw();
 }
 
 function boundsOf(feature) {
@@ -391,20 +485,24 @@ canvas.addEventListener("wheel", (ev) => {
   ev.preventDefault();
   const point = imagePoint(ev);
   const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-  const scale = Math.min(24, Math.max(0.05, camera.scale * factor));
+  const minScale = image ? Math.min(canvas.width / image.width, canvas.height / image.height) || 1 : 0.05;
+  const scale = Math.min(24, Math.max(minScale, camera.scale * factor));
   camera.x = point.sx - point.ix * scale;
   camera.y = point.sy - point.iy * scale;
   camera.scale = scale;
+  clampCamera();
   draw();
 }, { passive: false });
 
 canvas.addEventListener("mousedown", (ev) => {
+  if (sliding || (ev.target.closest && ev.target.closest("#swipe"))) return;
   hideMenu();
   const point = imagePoint(ev);
   drag = { button: ev.button, ...point, moved: false, camx: camera.x, camy: camera.y, ctrl: ev.ctrlKey };
 });
 
 window.addEventListener("mousemove", (ev) => {
+  if (sliding) return;
   if (!drag) {
     const point = imagePoint(ev);
     const hit = hitTest(point.ix, point.iy);
@@ -418,6 +516,7 @@ window.addEventListener("mousemove", (ev) => {
   if (drag.button === 0) {
     camera.x = drag.camx + (point.sx - drag.sx);
     camera.y = drag.camy + (point.sy - drag.sy);
+    clampCamera();
     box = null;
   } else if (drag.button === 2) {
     box = {
@@ -431,6 +530,11 @@ window.addEventListener("mousemove", (ev) => {
 });
 
 window.addEventListener("mouseup", (ev) => {
+  if (sliding) {
+    sliding = false;
+    drag = null;
+    return;
+  }
   if (!drag) return;
   const point = imagePoint(ev);
   const ended = drag;
@@ -472,9 +576,15 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
   if (typing) return;
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "f") {
+    ev.preventDefault();
+    fit();
+    draw();
+    return;
+  }
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") {
     ev.preventDefault();
-    $("undo").click();
+    undo();
     return;
   }
   if (ev.key === "Escape") {
@@ -482,6 +592,8 @@ window.addEventListener("keydown", (ev) => {
     hideMenu();
     $("selected-count").textContent = "0";
     draw();
+  } else if (ev.key === "Delete") {
+    removeSelected();
   } else if (ev.key >= "1" && ev.key <= "9") {
     const name = (state.label_names || [])[Number(ev.key) - 1];
     if (name) assign(name);
@@ -557,19 +669,65 @@ $("prev-page").addEventListener("click", () => move(-1));
 $("next-page").addEventListener("click", () => move(1));
 $("tile").addEventListener("change", () => move(0));
 $("filter").addEventListener("change", draw);
-$("fit").addEventListener("click", () => { fit(); draw(); });
-$("undo").addEventListener("click", async () => {
+async function undo() {
   applyState(await post("/api/undo"));
   await refreshView(false);
-});
+}
+async function removeSelected() {
+  if (!selection.size) return;
+  const ids = [...selection];
+  selection.clear();
+  applyState(await post("/api/delete", { ids }));
+  await refreshView(false);
+}
 $("save").addEventListener("click", async () => {
   try {
     const result = await post("/api/save", { path: $("save-path").value });
-    $("hud").textContent = `Saved ${result.written} features to ${result.path}`;
+    const parts = [];
+    if (result.written) parts.push(`${result.written} labels`);
+    if (result.removed) parts.push(`${result.removed} removed`);
+    $("hud").textContent = parts.length ? `Saved ${parts.join(", ")}` : "Saved";
   } catch (err) {
     $("warning").textContent = err.message;
   }
 });
+$("new").addEventListener("click", async () => {
+  if (state.stats && state.stats.changed && !window.confirm("Start new? Unsaved labels and deletions will be dropped.")) return;
+  selection.clear();
+  features = [];
+  $("save-path").value = "";
+  applyState(await post("/api/reset"));
+  draw();
+});
+$("help").addEventListener("click", () => {
+  $("help-pop").classList.toggle("hidden");
+});
+$("compare").addEventListener("click", () => {
+  compareMode = compareMode === "both" ? "post" : "both";
+  syncCompare(true);
+});
+const swipeEl = $("swipe");
+swipeEl.addEventListener("pointerdown", (ev) => {
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  sliding = true;
+  drag = null;
+  swipeEl.setPointerCapture(ev.pointerId);
+  moveSwipe(ev.clientX);
+});
+swipeEl.addEventListener("pointermove", (ev) => {
+  if (!sliding) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  moveSwipe(ev.clientX);
+});
+function endSlide() {
+  sliding = false;
+  drag = null;
+}
+swipeEl.addEventListener("pointerup", endSlide);
+swipeEl.addEventListener("pointercancel", endSlide);
 $("add-label").addEventListener("click", async () => {
   labelDrafts.push(`label ${labelDrafts.length + 1}`);
   await syncLabels();
@@ -595,13 +753,14 @@ $("open-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   $("gate-error").textContent = "";
   const tiff = $("tiff").value.trim();
+  const pre = $("pre").value.trim();
   const geojson = $("geojson").value.trim();
   if (!tiff || !geojson) {
     $("gate-error").textContent = "Choose a TIFF and a GeoJSON first.";
     return;
   }
   try {
-    applyState(await post("/api/load", { tiff, geojson, field: "label" }));
+    applyState(await post("/api/load", { tiff, pre, geojson, field: "label" }));
     $("save-path").value = state.geojson || "";
     await refreshView(true);
   } catch (err) {
@@ -629,6 +788,7 @@ fetch("/api/state").then((response) => response.json()).then(async (next) => {
   applyState(next);
   if (next.loaded) {
     $("tiff").value = next.tiff;
+    $("pre").value = next.pre || "";
     $("geojson").value = next.geojson;
     $("save-path").value = next.geojson;
     await refreshView(true);
