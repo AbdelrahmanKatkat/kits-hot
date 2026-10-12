@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>label kit</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">label kit</div>
+    <div id="place" class="place">No image loaded</div>
+    <div class="header-actions">
+      <button id="fit" type="button">Fit</button>
+      <button id="undo" type="button">Undo</button>
+      <button id="save" type="button" class="primary">Save</button>
+    </div>
+  </header>
+
+  <div id="gate" class="gate">
+    <form id="open-form">
+      <h1>Open files</h1>
+      <p class="muted">Pick an image and a GeoJSON layer, then label features.</p>
+      <label>GeoTIFF
+        <input id="tiff" type="text" spellcheck="false" placeholder="post_aligned.tif" />
+        <button data-browse="tiff" type="button" title="Browse">📁</button>
+      </label>
+      <label>GeoJSON
+        <input id="geojson" type="text" spellcheck="false" placeholder="damage.geojson" />
+        <button data-browse="geojson" type="button" title="Browse">📁</button>
+      </label>
+      <div class="gate-actions">
+        <button type="submit" class="primary" title="Open">Open</button>
+      </div>
+      <p id="gate-error" class="error"></p>
+    </form>
+  </div>
+
+  <main>
+    <section class="map-wrap">
+      <canvas id="map"></canvas>
+      <div id="hud" class="hud"></div>
+      <div id="overview" class="overview hidden">
+        <canvas id="overview-map" width="240" height="180"></canvas>
+      </div>
+      <div id="pager" class="pager hidden">
+        <button id="prev-page" type="button">Prev</button>
+        <button id="next-page" type="button">Next</button>
+      </div>
+      <div id="menu" class="menu hidden"></div>
+    </section>
+    <aside id="side" class="hidden">
+      <section class="panel">
+        <h2>View</h2>
+        <p id="page-text" class="muted">—</p>
+        <label class="inline">Tile
+          <select id="tile">
+            <option value="512">512</option>
+            <option value="1024" selected>1024</option>
+            <option value="2048">2048</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Labels <span class="chip" id="selected-count">0</span></h2>
+        <label class="inline">Existing column
+          <select id="column"><option value="">None</option></select>
+        </label>
+        <button id="import-column" type="button">Use that column</button>
+        <p class="muted">Empty, unreviewed, none, and null in that column stay unlabeled.</p>
+        <label class="inline">Column <input id="field-side" type="text" value="label" /></label>
+        <div id="apply-list"></div>
+        <button id="clear-label" type="button">Clear label</button>
+        <button id="select-unlabeled" type="button">Select unlabeled in view</button>
+        <label class="inline">Show
+          <select id="filter">
+            <option value="all">All features</option>
+            <option value="unlabeled">Unlabeled only</option>
+          </select>
+        </label>
+        <hr class="sep" />
+        <ul id="label-list"></ul>
+        <button id="add-label" type="button">Add label</button>
+      </section>
+
+      <section class="panel">
+        <h2>Progress</h2>
+        <div class="bar"><div id="bar-fill"></div></div>
+        <p id="stats" class="muted"></p>
+        <p id="warning" class="error"></p>
+        <label class="inline">Save path <input id="save-path" type="text" spellcheck="false" /></label>
+        <p class="muted">The first save of an existing file copies it to a .bak beside it.</p>
+      </section>
+
+    </aside>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
