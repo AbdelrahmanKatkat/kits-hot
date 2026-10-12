@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from label_kit.session import Session
+from validator_kit.session import Session
 
 
 def _write_tiff(path, size=500):
@@ -111,7 +111,7 @@ def test_label_roundtrip_and_tile_pages(tmp_path):
 
 
 def test_pre_image_must_match_and_can_render(tmp_path):
-    from label_kit.session import SessionError
+    from validator_kit.session import SessionError
 
     tiff = tmp_path / "post.tif"
     pre = tmp_path / "pre.tif"

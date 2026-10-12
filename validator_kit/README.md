@@ -1,4 +1,4 @@
-# Labeler Kit
+# Validator_Kit
 
 Local map for labeling a GeoJSON on top of a GeoTIFF. One page shows nine tiles of the image stitched together. You move that page across the file, select features, and write a label you defined in the side panel.
 
@@ -10,14 +10,14 @@ From this folder:
 
 ```bash
 uv sync
-uv run label-kit --tiff path\to\post_aligned.tif --geojson path\to\damage.geojson --field label
+uv run validator-kit --tiff path\to\post_aligned.tif --geojson path\to\damage.geojson --field label
 ```
 
 Or open the page and browse to the files:
 
 ```bash
 uv sync
-uv run label-kit
+uv run validator-kit
 ```
 
 The app listens on `http://127.0.0.1:8765/`. The TIFF and GeoJSON are read only on this machine.

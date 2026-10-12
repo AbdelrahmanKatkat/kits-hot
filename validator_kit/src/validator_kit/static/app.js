@@ -547,7 +547,11 @@ function hideMenu() {
 
 function showMenu(sx, sy) {
   menu.replaceChildren();
-  if (!state.label_names || !state.label_names.length) {
+  if (!selection.size) {
+    const note = document.createElement("div");
+    note.textContent = "Click a feature first.";
+    menu.append(note);
+  } else if (!state.label_names || !state.label_names.length) {
     const note = document.createElement("div");
     note.textContent = "Add a label in the side panel first.";
     menu.append(note);
@@ -570,6 +574,17 @@ function showMenu(sx, sy) {
       assign(null);
     });
     menu.append(clear);
+  }
+  if (selection.size) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = selection.size === 1 ? "Delete" : `Delete ${selection.size}`;
+    remove.addEventListener("click", () => {
+      hideMenu();
+      removeSelected();
+    });
+    menu.append(remove);
   }
   menu.classList.remove("hidden");
   const pad = 6;
@@ -599,25 +614,19 @@ async function assign(label) {
   draw();
 }
 
-canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
-canvas.addEventListener("wheel", (ev) => {
-  ev.preventDefault();
-  const point = imagePoint(ev);
-  const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-  const minScale = image ? Math.min(canvas.width / image.width, canvas.height / image.height) || 1 : 0.05;
-  const scale = Math.min(24, Math.max(minScale, camera.scale * factor));
-  camera.x = point.sx - point.ix * scale;
-  camera.y = point.sy - point.iy * scale;
-  camera.scale = scale;
-  clampCamera();
-  draw();
-}, { passive: false });
-
 canvas.addEventListener("mousedown", (ev) => {
   if (sliding || (ev.target.closest && ev.target.closest("#swipe"))) return;
+  if (ev.button === 2) ev.preventDefault();
   hideMenu();
   const point = imagePoint(ev);
-  drag = { button: ev.button, ...point, moved: false, camx: camera.x, camy: camera.y, ctrl: ev.ctrlKey };
+  drag = {
+    button: ev.button,
+    ...point,
+    moved: false,
+    camx: camera.x,
+    camy: camera.y,
+    ctrl: ev.ctrlKey || ev.metaKey,
+  };
 });
 
 window.addEventListener("mousemove", (ev) => {
@@ -630,9 +639,9 @@ window.addEventListener("mousemove", (ev) => {
     return;
   }
   const point = imagePoint(ev);
-  if (Math.hypot(point.sx - drag.sx, point.sy - drag.sy) > 4) drag.moved = true;
+  if (Math.hypot(point.sx - drag.sx, point.sy - drag.sy) > 6) drag.moved = true;
   if (!drag.moved) return;
-  if (drag.button === 0) {
+  if (drag.button === 0 && panMode) {
     camera.x = drag.camx + (point.sx - drag.sx);
     camera.y = drag.camy + (point.sy - drag.sy);
     clampCamera();
@@ -648,6 +657,8 @@ window.addEventListener("mousemove", (ev) => {
   draw();
 });
 
+let suppressMenu = false;
+
 window.addEventListener("mouseup", (ev) => {
   if (sliding) {
     sliding = false;
@@ -658,33 +669,64 @@ window.addEventListener("mouseup", (ev) => {
   const point = imagePoint(ev);
   const ended = drag;
   drag = null;
+  const additive = ended.ctrl || ev.ctrlKey || ev.metaKey;
   if (ended.button === 2 && ended.moved && box) {
     const x0 = Math.min(ended.ix, point.ix);
     const x1 = Math.max(ended.ix, point.ix);
     const y0 = Math.min(ended.iy, point.iy);
     const y1 = Math.max(ended.iy, point.iy);
-    if (!ended.ctrl) selection.clear();
+    if (!additive) selection.clear();
     for (const feature of features) {
       if (visible(feature) && hitsBox(feature, x0, y0, x1, y1)) selection.add(feature.id);
     }
     box = null;
-  } else if (ended.button === 2 && !ended.moved) {
-    box = null;
-    showMenu(ended.sx, ended.sy);
-  } else if (ended.button === 0 && !ended.moved && !panMode) {
+    suppressMenu = true;
+  } else if (ended.button === 0 && !panMode && !ended.moved) {
     const hit = hitTest(ended.ix, ended.iy);
-    if (ended.ctrl && hit) {
+    if (additive && hit) {
       if (selection.has(hit.id)) selection.delete(hit.id);
       else selection.add(hit.id);
     } else if (hit) {
       selection.clear();
       selection.add(hit.id);
-    } else if (!ended.ctrl) {
+    } else if (!additive) {
       selection.clear();
     }
   }
   draw();
 });
+
+canvas.addEventListener("contextmenu", (ev) => {
+  ev.preventDefault();
+  if (suppressMenu) {
+    suppressMenu = false;
+    return;
+  }
+  const point = imagePoint(ev);
+  const hit = hitTest(point.ix, point.iy);
+  const additive = ev.ctrlKey || ev.metaKey;
+  if (hit) {
+    if (additive) selection.add(hit.id);
+    else if (!selection.has(hit.id)) {
+      selection.clear();
+      selection.add(hit.id);
+    }
+  }
+  showMenu(point.sx, point.sy);
+  draw();
+});
+canvas.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const point = imagePoint(ev);
+  const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const minScale = image ? Math.min(canvas.width / image.width, canvas.height / image.height) || 1 : 0.05;
+  const scale = Math.min(24, Math.max(minScale, camera.scale * factor));
+  camera.x = point.sx - point.ix * scale;
+  camera.y = point.sy - point.iy * scale;
+  camera.scale = scale;
+  clampCamera();
+  draw();
+}, { passive: false });
 
 window.addEventListener("keydown", (ev) => {
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(ev.target.tagName);
@@ -884,6 +926,7 @@ $("import-column").addEventListener("click", async () => {
   await refreshView(false);
 });
 $("clear-label").addEventListener("click", () => assign(null));
+$("delete-selected").addEventListener("click", () => removeSelected());
 $("select-unlabeled").addEventListener("click", () => {
   selection.clear();
   for (const feature of features) {

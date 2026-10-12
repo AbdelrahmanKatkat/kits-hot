@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from label_kit.session import Session, SessionError
+from validator_kit.session import Session, SessionError
 
 STATIC = Path(__file__).resolve().parent / "static"
 _lock = threading.Lock()
@@ -38,7 +38,7 @@ def main() -> None:
 
     server = HTTPServer(("127.0.0.1", args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"label_kit {url}")
+    print(f"Validator_Kit {url}")
     if not args.no_browser:
         webbrowser.open(url)
     try:

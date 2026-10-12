@@ -283,6 +283,7 @@ canvas {
 }
 
 .menu button:hover { background: #334155; }
+.menu .danger { color: #fecaca; }
 
 aside {
   width: min(420px, 30vw);

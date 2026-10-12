@@ -1,11 +1,15 @@
-# label_kit local environment and caches
-label_kit/.venv/
-label_kit/.pytest_cache/
-label_kit/.ruff_cache/
+# local environments and caches
+validator_kit/.venv/
+labeller_kit/.venv/
+validator_kit/.pytest_cache/
+validator_kit/.ruff_cache/
+labeller_kit/.pytest_cache/
 **/__pycache__/
 *.py[cod]
 *.egg-info/
 .ruff_cache/
 
-# one-time backups the labeler writes next to a GeoJSON
+# one-time backups written beside a GeoJSON on the first save
 *.bak
+*.backup.geojson
+*.geojson.tmp

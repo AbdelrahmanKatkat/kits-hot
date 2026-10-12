@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Labeler Kit</title>
+  <title>Validator_Kit</title>
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
@@ -37,7 +37,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 1.8 21 7v10l-9 5.2L3 17V7l9-5.2z" fill="#e11d48"/>
           </svg>
-          Labeler Kit
+          Validator_Kit
         </div>
       </header>
       <div class="map-wrap">
@@ -69,7 +69,7 @@
           <canvas id="overview-map" width="240" height="180"></canvas>
         </div>
         <div id="help-pop" class="help-pop hidden">
-          <p>Click selects. Ctrl+click adds. Right-drag selects a window. Right-click applies a label.</p>
+          <p>Click selects one feature. Ctrl+click adds or removes. Right-drag selects a window. Right-click labels the feature under the pointer, or deletes it.</p>
           <p><b>Del</b> removes the selection. <b>Ctrl+Z</b> undoes. <b>Ctrl+F</b> fits the page. <b>Ctrl+S</b> saves.</p>
           <p>Keys 1–9 apply labels. 0 clears. Arrows move to the next or previous block.</p>
           <p>The number at the top right is the tile size. Click it to switch 512, 1024, and 2048. The switch beside a label hides that class on the map.</p>
@@ -153,6 +153,7 @@
         <div class="actions">
           <button id="add-label" type="button">Add label</button>
           <button id="clear-label" type="button">Clear label</button>
+          <button id="delete-selected" type="button">Delete selected</button>
           <button id="select-unlabeled" type="button">Select unlabeled</button>
         </div>
         <div class="field">
